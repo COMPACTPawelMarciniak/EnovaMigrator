@@ -315,6 +315,7 @@ public class MigrationService
             var pesel = dict["PESEL"]?.ToString();
             var imie = dict["Imie"]?.ToString() ?? "";
             var nazwisko = dict["Nazwisko"]?.ToString() ?? "";
+            var kod = dict.ContainsKey("Kod") ? dict["Kod"]?.ToString() : null;
 
             // Sprawdź czy pracownik jest na liście pomijanych
             if (_mapping.SkipPracownicy.Contains(sourceId))
@@ -340,8 +341,13 @@ public class MigrationService
                 // Sprawdź czy pracownik już istnieje w target
                 int? existingTargetId = null;
 
-                // Sprawdź po PESEL (priorytet)
-                if (!string.IsNullOrEmpty(pesel) && existing.PracownicyPeselToId.TryGetValue(pesel, out var targetIdByPesel))
+                // Sprawdź po Kod PIERWSZY (unique index Pracownicy_Podstawowy - najwyższy priorytet)
+                if (!string.IsNullOrEmpty(kod) && existing.PracownicyKodToId.TryGetValue(kod, out var targetIdByKod))
+                {
+                    existingTargetId = targetIdByKod;
+                }
+                // Sprawdź po PESEL
+                else if (!string.IsNullOrEmpty(pesel) && existing.PracownicyPeselToId.TryGetValue(pesel, out var targetIdByPesel))
                 {
                     existingTargetId = targetIdByPesel;
                 }
@@ -385,6 +391,11 @@ public class MigrationService
                         {
                             existing.PracownicyPesel.Add(pesel);
                             existing.PracownicyPeselToId[pesel] = newTargetId.Value;
+                        }
+                        if (!string.IsNullOrEmpty(kod))
+                        {
+                            existing.PracownicyKod.Add(kod);
+                            existing.PracownicyKodToId[kod] = newTargetId.Value;
                         }
                         var newNameKey = $"{BusinessKeyHelper.FormatString(imie)}|{BusinessKeyHelper.FormatString(nazwisko)}";
                         existing.PracownicyKeys.Add(newNameKey);
@@ -459,8 +470,8 @@ public class MigrationService
                     value = null; // SetNull - użytkownik wybrał ustawienie NULL
                 // W przeciwnym razie kalendarze opcjonalne - zostawiamy oryginalne ID
             }
-            // Mapuj FK do wydziałów
-            else if (col == "Wydzial" && value != null)
+            // Mapuj FK do wydziałów (kolumna Wydzial lub EtatWydzial)
+            else if ((col == "Wydzial" || col == "EtatWydzial") && value != null)
             {
                 var oldWydId = Convert.ToInt32(value);
                 if (_mapping.Wydzialy.TryGetValue(oldWydId, out var newWydId))
@@ -1135,7 +1146,14 @@ public class MigrationService
             if (!_mapping.Pracownicy.TryGetValue(sourcePracownik, out var targetPracownik))
                 return false; // brak mapowania pracownika - pomijamy
 
-            // Sprawdź po NumerPelny
+            // Sprawdź globalny NumerPelny (unique index na całej tabeli)
+            if (!string.IsNullOrEmpty(numerPelny))
+            {
+                if (existing.UmowyNumerPelnyGlobal.Contains(numerPelny))
+                    return false; // umowa o tym numerze już istnieje globalnie
+            }
+
+            // Sprawdź po Pracownik|NumerPelny (dodatkowy check)
             if (!string.IsNullOrEmpty(numerPelny))
             {
                 var numerKey = BusinessKeyHelper.BuildKey(targetPracownik, numerPelny);
@@ -1160,13 +1178,21 @@ public class MigrationService
             if (i % 10 == 0 || i == count) progress?.Report($"(6/13) Umowy: {i}/{count}");
             try
             {
-                int? sourceId = await InsertRowAsync("Umowy", row, columns, existing, transaction);
-                if (sourceId.HasValue)
+                int? newTargetId = await InsertRowAsync("Umowy", row, columns, existing, transaction);
+                if (newTargetId.HasValue)
                 {
                     var dict = (IDictionary<string, object>)row;
                     var oldId = (int)dict["ID"];
-                    _mapping.Umowy[oldId] = sourceId.Value;
+                    _mapping.Umowy[oldId] = newTargetId.Value;
                     _stats.UmowyMigrated++;
+
+                    // Dodaj do existing żeby kolejne iteracje też widziały
+                    var numerPelnyIns = dict["NumerPelny"]?.ToString();
+                    if (!string.IsNullOrEmpty(numerPelnyIns))
+                    {
+                        existing.UmowyNumerPelnyGlobal.Add(numerPelnyIns);
+                        existing.UmowyNumerPelnyGlobalToId[numerPelnyIns] = newTargetId.Value;
+                    }
                 }
             }
             catch (Exception ex)
@@ -1444,13 +1470,14 @@ public class MigrationService
             var dict = (IDictionary<string, object>)row;
             var sourcePracownik = dict["Pracownik"] != null ? Convert.ToInt32(dict["Pracownik"]) : (int?)null;
             var nazwa = dict["Nazwa"]?.ToString() ?? "";
+            var typ = dict.ContainsKey("Typ") && dict["Typ"] != null ? Convert.ToInt32(dict["Typ"]) : 0;
 
             // Sprawdź czy mamy mapowanie pracownika
             if (!sourcePracownik.HasValue || !_mapping.Pracownicy.TryGetValue(sourcePracownik.Value, out var targetPracownik))
                 return false;
 
-            // Klucz biznesowy: Pracownik|Nazwa (z target ID)
-            var businessKey = BusinessKeyHelper.BuildKey(targetPracownik, nazwa);
+            // Klucz biznesowy: Typ|Nazwa (unique index Kalendarze_Podstawowy)
+            var businessKey = $"{typ}|{(string.IsNullOrEmpty(nazwa) ? "<EMPTY>" : nazwa)}";
             return !existing.KalendarzeKeys.Contains(businessKey);
         }).ToList();
 
@@ -1622,7 +1649,7 @@ public class MigrationService
                     value = newDefId;
                 // DefDokumentow - jeśli brak mapowania, zostaw oryginalne ID (może istnieć w target)
             }
-            // Mapuj FK do definicji list płac
+            // Mapuj FK do definicji list płac (w ListyPlac i DefElementow)
             else if ((col == "Definicja" || col == "DefListaPlac") && value != null && tableName == "ListyPlac")
             {
                 var oldDefId = Convert.ToInt32(value);
@@ -1633,8 +1660,18 @@ public class MigrationService
                 else
                     throw new Exception($"Brak mapowania dla DefListPlac ID={oldDefId}");
             }
-            // Mapuj FK do wydziałów
-            else if (col == "Wydzial" && value != null)
+            // Mapuj FK do definicji list płac w DefElementow
+            else if (col == "DefinicjaListyPlac" && value != null)
+            {
+                var oldDefId = Convert.ToInt32(value);
+                if (_mapping.DefListPlac.TryGetValue(oldDefId, out var newDefId))
+                    value = newDefId;
+                else if (_mapping.SetNullDefListPlac.Contains(oldDefId))
+                    value = null; // SetNull
+                // Jeśli brak mapowania, zostaw oryginalne ID (może istnieć w target)
+            }
+            // Mapuj FK do wydziałów (kolumna Wydzial lub EtatWydzial)
+            else if ((col == "Wydzial" || col == "EtatWydzial") && value != null)
             {
                 var oldWydId = Convert.ToInt32(value);
                 if (_mapping.Wydzialy.TryGetValue(oldWydId, out var newWydId))

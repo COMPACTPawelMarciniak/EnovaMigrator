@@ -76,11 +76,13 @@ public class MappingData
 // Klasa do śledzenia co już istnieje w bazie docelowej (po kluczach biznesowych)
 public class ExistingRecords
 {
-    // Pracownicy: PESEL lub Imie|Nazwisko
+    // Pracownicy: PESEL lub Imie|Nazwisko lub Kod (unique index Pracownicy_Podstawowy)
     public HashSet<string> PracownicyPesel { get; set; } = new();      // PESEL
     public HashSet<string> PracownicyKeys { get; set; } = new();       // Imie|Nazwisko
+    public HashSet<string> PracownicyKod { get; set; } = new();        // Kod (unique index)
     public Dictionary<string, int> PracownicyPeselToId { get; set; } = new();  // PESEL -> ID w target
     public Dictionary<string, int> PracownicyKeysToId { get; set; } = new();   // Imie|Nazwisko -> ID w target
+    public Dictionary<string, int> PracownicyKodToId { get; set; } = new();    // Kod -> ID w target
 
     // ListyPlac: NumerPelny lub Definicja|OkresFrom|OkresTo|Wydzial
     public HashSet<string> ListyPlacNumery { get; set; } = new();
@@ -95,9 +97,11 @@ public class ExistingRecords
     // Nieobecnosci: Pracownik|Definicja|OkresFrom|OkresTo
     public HashSet<string> NieobecnosciKeys { get; set; } = new();     // Pracownik|Definicja|OkresFrom|OkresTo
 
-    // Umowy: Pracownik|NumerPelny lub Pracownik|Data
+    // Umowy: Pracownik|NumerPelny lub Pracownik|Data lub NumerPelny (globalny unikalny)
     public HashSet<string> UmowyNumery { get; set; } = new();          // Pracownik|NumerPelny
     public HashSet<string> UmowyKeys { get; set; } = new();            // Pracownik|Data
+    public HashSet<string> UmowyNumerPelnyGlobal { get; set; } = new(); // NumerPelny (globalny unique index)
+    public Dictionary<string, int> UmowyNumerPelnyGlobalToId { get; set; } = new();  // NumerPelny -> ID w target
 
     // Rodzina: Pracownik|PESEL lub Pracownik|Imie|Nazwisko|DataUrodzenia
     public HashSet<string> RodzinaPesel { get; set; } = new();         // Pracownik|PESEL

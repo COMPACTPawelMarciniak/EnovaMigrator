@@ -286,11 +286,11 @@ public class DatabaseService : IDisposable
         static string FmtInt(int? i) => i.HasValue ? i.Value.ToString() : "<NULL>";
         static string FmtStr(string? s) => string.IsNullOrEmpty(s) ? "<EMPTY>" : s;
 
-        // Pracownicy - po PESEL lub Imie|Nazwisko
+        // Pracownicy - po PESEL lub Imie|Nazwisko lub Kod (unique index Pracownicy_Podstawowy)
         try
         {
-            var pracData = await conn.QueryAsync<(int ID, string? PESEL, string Imie, string Nazwisko)>(
-                "SELECT ID, PESEL, Imie, Nazwisko FROM Pracownicy");
+            var pracData = await conn.QueryAsync<(int ID, string? PESEL, string Imie, string Nazwisko, string? Kod)>(
+                "SELECT ID, PESEL, Imie, Nazwisko, Kod FROM Pracownicy");
             foreach (var p in pracData)
             {
                 // Klucz po PESEL (jeśli dostępny)
@@ -303,6 +303,12 @@ public class DatabaseService : IDisposable
                 var nameKey = $"{FmtStr(p.Imie)}|{FmtStr(p.Nazwisko)}";
                 existing.PracownicyKeys.Add(nameKey);
                 existing.PracownicyKeysToId[nameKey] = p.ID;
+                // Klucz po Kod (unique index Pracownicy_Podstawowy)
+                if (!string.IsNullOrEmpty(p.Kod))
+                {
+                    existing.PracownicyKod.Add(p.Kod);
+                    existing.PracownicyKodToId[p.Kod] = p.ID;
+                }
             }
         }
         catch { /* tabela może nie istnieć */ }
@@ -351,15 +357,20 @@ public class DatabaseService : IDisposable
         }
         catch { /* tabela może nie istnieć */ }
 
-        // Umowy - po Pracownik|NumerPelny lub Pracownik|Data
+        // Umowy - po Pracownik|NumerPelny lub Pracownik|Data lub globalny NumerPelny (unique index)
         try
         {
-            var umData = await conn.QueryAsync<(int Pracownik, string? NumerPelny, DateTime? Data)>(
-                "SELECT Pracownik, NumerPelny, Data FROM Umowy");
+            var umData = await conn.QueryAsync<(int ID, int Pracownik, string? NumerPelny, DateTime? Data)>(
+                "SELECT ID, Pracownik, NumerPelny, Data FROM Umowy");
             foreach (var u in umData)
             {
                 if (!string.IsNullOrEmpty(u.NumerPelny))
+                {
                     existing.UmowyNumery.Add($"{u.Pracownik}|{u.NumerPelny}");
+                    // Globalny klucz po NumerPelny (unique index na całej tabeli)
+                    existing.UmowyNumerPelnyGlobal.Add(u.NumerPelny);
+                    existing.UmowyNumerPelnyGlobalToId[u.NumerPelny] = u.ID;
+                }
                 existing.UmowyKeys.Add($"{u.Pracownik}|{FmtDate(u.Data)}");
             }
         }
@@ -419,15 +430,15 @@ public class DatabaseService : IDisposable
         }
         catch { /* tabela może nie istnieć */ }
 
-        // Kalendarze - po Pracownik|Nazwa
+        // Kalendarze - po Typ|Nazwa (unique index Kalendarze_Podstawowy)
         try
         {
-            var kalData = await conn.QueryAsync<(string? Nazwa, int? Pracownik)>(
-                "SELECT Nazwa, Pracownik FROM Kalendarze");
+            var kalData = await conn.QueryAsync<(int Typ, string? Nazwa, int? Pracownik)>(
+                "SELECT Typ, Nazwa, Pracownik FROM Kalendarze");
             foreach (var k in kalData)
             {
-                if (k.Pracownik.HasValue)
-                    existing.KalendarzeKeys.Add($"{k.Pracownik}|{FmtStr(k.Nazwa)}");
+                // Unique index jest na Typ|Nazwa
+                existing.KalendarzeKeys.Add($"{k.Typ}|{FmtStr(k.Nazwa)}");
             }
         }
         catch { /* tabela może nie istnieć */ }
