@@ -1,0 +1,26 @@
+# Build results
+bin/
+obj/
+
+# IDE
+.idea/
+.vs/
+*.user
+*.suo
+
+# macOS
+.DS_Store
+
+# Logs and temporary files
+*.log
+migration_state.json
+
+# Audit reports (generated)
+audit_*.csv
+migration_report_*.html
+
+# Local config with connection strings (may contain passwords)
+appsettings.local.json
+
+# Migration plan (user-specific)
+migration_plan.json
